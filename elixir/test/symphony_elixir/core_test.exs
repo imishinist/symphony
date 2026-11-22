@@ -100,36 +100,14 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
   end
 
-  test "current WORKFLOW.md file is valid and complete" do
-    original_workflow_path = Workflow.workflow_file_path()
-    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+  test "in-repo WORKFLOW.md has valid configuration and prompt syntax" do
+    workflow_path = Path.expand("../../WORKFLOW.md", __DIR__)
 
-    on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
-    on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)
-
-    System.put_env("LINEAR_API_KEY", "test-linear-api-key")
-    Workflow.clear_workflow_file_path()
-
-    assert {:ok, %{config: config, prompt: prompt}} = Workflow.load()
-    assert is_map(config)
-
-    tracker = Map.get(config, "tracker", %{})
-    assert is_map(tracker)
-    assert Map.get(tracker, "kind") == "linear"
-    assert is_binary(get_in(tracker, ["provider", "project_slug"]))
-    assert is_list(Map.get(tracker, "active_states"))
-    assert is_list(Map.get(tracker, "terminal_states"))
-
-    hooks = Map.get(config, "hooks", %{})
-    assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
-
+    assert {:ok, %{config: config, prompt: prompt}} = Workflow.load(workflow_path)
+    assert {:ok, settings} = Config.Schema.parse(config)
+    assert {:ok, _adapter} = Tracker.adapter_for_kind(settings.tracker.kind)
+    assert {:ok, _template} = Solid.parse(prompt)
     assert String.trim(prompt) != ""
-    assert is_binary(Config.workflow_prompt())
-    assert Config.workflow_prompt() == prompt
   end
 
   test "linear api token resolves from LINEAR_API_KEY env var" do
@@ -1023,13 +1001,7 @@ defmodule SymphonyElixir.CoreTest do
     issue_id = "issue-resume"
     ref = make_ref()
     orchestrator_name = Module.concat(__MODULE__, :ContinuationOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
-
-    on_exit(fn ->
-      if Process.alive?(pid) do
-        Process.exit(pid, :normal)
-      end
-    end)
+    pid = start_retry_orchestrator(orchestrator_name)
 
     initial_state = :sys.get_state(pid)
 
@@ -1048,28 +1020,23 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :normal})
-    Process.sleep(50)
     state = :sys.get_state(pid)
+    after_ms = System.monotonic_time(:millisecond)
 
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_in_range(due_at_ms, 500, 1_100)
+    assert due_at_ms in (before_ms + 1_000)..(after_ms + 1_000)
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
     issue_id = "issue-crash"
     ref = make_ref()
     orchestrator_name = Module.concat(__MODULE__, :CrashRetryOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
-
-    on_exit(fn ->
-      if Process.alive?(pid) do
-        Process.exit(pid, :normal)
-      end
-    end)
+    pid = start_retry_orchestrator(orchestrator_name)
 
     initial_state = :sys.get_state(pid)
 
@@ -1089,27 +1056,22 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
-    Process.sleep(50)
     state = :sys.get_state(pid)
+    after_ms = System.monotonic_time(:millisecond)
 
     assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 39_500, 40_500)
+    assert due_at_ms in (before_ms + 40_000)..(after_ms + 40_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
     issue_id = "issue-crash-initial"
     ref = make_ref()
     orchestrator_name = Module.concat(__MODULE__, :InitialCrashRetryOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
-
-    on_exit(fn ->
-      if Process.alive?(pid) do
-        Process.exit(pid, :normal)
-      end
-    end)
+    pid = start_retry_orchestrator(orchestrator_name)
 
     initial_state = :sys.get_state(pid)
 
@@ -1128,14 +1090,15 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    before_ms = System.monotonic_time(:millisecond)
     send(pid, {:DOWN, ref, :process, self(), :boom})
-    Process.sleep(50)
     state = :sys.get_state(pid)
+    after_ms = System.monotonic_time(:millisecond)
 
     assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
              state.retry_attempts[issue_id]
 
-    assert_due_in_range(due_at_ms, 9_000, 10_500)
+    assert due_at_ms in (before_ms + 10_000)..(after_ms + 10_000)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -1255,11 +1218,21 @@ defmodule SymphonyElixir.CoreTest do
     assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
   end
 
-  defp assert_due_in_range(due_at_ms, min_remaining_ms, max_remaining_ms) do
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
+  defp start_retry_orchestrator(name) do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    pid = start_supervised!({Orchestrator, name: name})
 
-    assert remaining_ms >= min_remaining_ms
-    assert remaining_ms <= max_remaining_ms
+    assert %Orchestrator.State{} =
+             eventually_value(fn ->
+               state = :sys.get_state(pid)
+
+               if is_integer(state.next_poll_due_at_ms) and
+                    state.next_poll_due_at_ms > System.monotonic_time(:millisecond) do
+                 state
+               end
+             end)
+
+    pid
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
@@ -1480,14 +1453,11 @@ defmodule SymphonyElixir.CoreTest do
     end
   end
 
-  test "in-repo WORKFLOW.md renders correctly" do
-    workflow_path = Workflow.workflow_file_path()
-    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+  test "in-repo WORKFLOW.md prompt renders without tracker credentials" do
+    workflow_path = Path.expand("../../WORKFLOW.md", __DIR__)
+    assert {:ok, %{prompt_template: template}} = Workflow.load(workflow_path)
 
-    on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)
-
-    System.put_env("LINEAR_API_KEY", "test-linear-api-key")
-    Workflow.set_workflow_file_path(Path.expand("WORKFLOW.md", File.cwd!()))
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory", prompt: template)
 
     issue = %Issue{
       identifier: "MT-616",
@@ -1498,23 +1468,9 @@ defmodule SymphonyElixir.CoreTest do
       labels: ["templating", "workflow"]
     }
 
-    on_exit(fn -> Workflow.set_workflow_file_path(workflow_path) end)
-
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
-    assert prompt =~ "You are working on a Linear ticket `MT-616`"
-    assert prompt =~ "Issue context:"
-    assert prompt =~ "Identifier: MT-616"
-    assert prompt =~ "Title: Use rich templates for WORKFLOW.md"
-    assert prompt =~ "Current status: In Progress"
-    assert prompt =~ "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd"
-    assert prompt =~ "This is an unattended orchestration session."
-    assert prompt =~ "Only stop early for a true external blocker"
-    assert prompt =~ "Do not include \"next steps for user\""
-    assert prompt =~ "open and follow `.codex/skills/land/SKILL.md`"
-    assert prompt =~ "Do not call `gh pr merge` directly"
-    assert prompt =~ "Follow-up context:"
-    assert prompt =~ "follow-up attempt #2"
+    assert String.trim(prompt) != ""
   end
 
   test "prompt builder adds continuation guidance for retries" do

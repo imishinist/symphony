@@ -128,13 +128,15 @@ jobs:
           test -n "$artifact"
           chmod +x "$artifact"
 
+          missing_workflow="$(mktemp -d)/WORKFLOW.md"
+
           set +e
-          output="$(SYMPHONY_INSTALL_DIR="$RUNNER_TEMP/symphony-install" "$artifact" 2>&1)"
+          output="$(SYMPHONY_INSTALL_DIR="$RUNNER_TEMP/symphony-install" "$artifact" "$missing_workflow" 2>&1)"
           status=$?
           set -e
 
           test "$status" -eq 1
-          grep -F "This Symphony implementation is a low key engineering preview." <<<"$output"
+          grep -F "Workflow file not found: $missing_workflow" <<<"$output"
 
   release:
     if: inputs.nightly || startsWith(github.ref, 'refs/tags/v')

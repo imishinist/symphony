@@ -97,9 +97,7 @@ For an Apple Silicon Mac, build and run with:
 mise install
 mise exec -- mix setup
 BURRITO_TARGET=macos_arm64 mise exec -- make release
-./burrito_out/symphony_macos_arm64 \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  /path/to/your/WORKFLOW.md
+./burrito_out/symphony_macos_arm64 /path/to/your/WORKFLOW.md
 ```
 
 Choose another target from the list above as needed; omitting `BURRITO_TARGET` builds all four.
