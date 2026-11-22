@@ -39,18 +39,15 @@ tracker issue can become a dispatch candidate again after restart.
 
 1. Make sure your codebase is set up to work well with agents: see
    [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
+2. Set `GITHUB_TOKEN` on the Symphony host with access to read and update repository issues and
+   pull requests. Configure Git transport authentication separately so agents can push branches.
 3. Copy this directory's `WORKFLOW.md` to your repo.
-4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
-     operations such as comment editing or upload flows.
+4. Copy the `commit`, `push`, `pull`, and `land` skills referenced by the workflow to your repo.
 5. Customize the copied `WORKFLOW.md` file for your project.
-   - To get your project's slug, right-click the project and copy its URL. The slug is part of the
-     URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
-     Team Settings → Workflow in Linear.
+   - Set `tracker.provider.repo` and update repository references in the hooks and prompt.
+   - Create the `symphony` label and apply it to open issues you want agents to work on. See the
+     [GitHub Issues adapter](#github-issues-adapter) section for review and requeue behavior.
+   - To use another tracker, configure its adapter and adapt the prompt to its workflow.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
 ## Prerequisites
@@ -277,6 +274,12 @@ codex:
 
 ### GitHub Issues adapter
 
+- The included `WORKFLOW.md` targets `imishinist/symphony` and dispatches open issues labeled
+  `symphony`, using host-side `GITHUB_TOKEN` authentication. When adapting it, change both
+  `tracker.provider.repo` and the repository references in the hooks and prompt. At review
+  handoff or an external blocker, the agent updates its workpad and removes the issue's `symphony`
+  label while leaving it open. Re-add the label after requesting changes, approving the PR for
+  merge, or resolving the blocker to resume work. The issue closes after its PR is merged.
 - Config: use `tracker.kind: github` with required `tracker.provider.repo` in `owner/repo` form,
   optional `token` (defaults to `GITHUB_TOKEN` and accepts `$VAR`), and optional `api_url`
   (default `https://api.github.com`, HTTPS only). Set explicit `active_states` and
