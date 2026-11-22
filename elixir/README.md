@@ -187,12 +187,36 @@ Notes:
   app-server update resets it; it is not a total turn runtime cap.
 - Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
+- `codex.permissions` selects a named Codex permissions profile for the thread and all its turns.
+  When set, it takes precedence over `thread_sandbox` and `turn_sandbox_policy`; Symphony omits
+  those legacy sandbox fields from requests. Existing sessions keep their selected profile after
+  workflow reloads, and new sessions use the updated selection. The installed Codex app-server
+  must support the experimental `permissions` field.
 - When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
   unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
   Symphony validation.
 - Workflows that run package managers or other commands that resolve external hosts should set
   `networkAccess: true` in `codex.turn_sandbox_policy`; otherwise DNS/network access may be denied
   by the Codex turn sandbox.
+
+Codex's `workspace-write` policy protects `.git` separately, so it can reject `git add` and
+`git commit` even inside a writable workspace. To allow Git metadata writes, define a named
+profile and select it with `codex.permissions`:
+
+```yaml
+codex:
+  command: >-
+    codex --config 'permissions.symphony={extends=":workspace",filesystem={":workspace_roots"={".git"="write"}},network={enabled=true}}'
+    --config 'default_permissions="symphony"' app-server
+  permissions: symphony
+```
+
+This extends Codex's workspace profile with write access to the current issue workspace's `.git`
+and network access. `:workspace_roots` is resolved for the Codex session's workspace, rather than
+the parent Symphony workspace directory or the user's home directory. Configure the profile on
+each worker when using SSH-backed execution, or define it in the launch command as above so the
+worker receives the same definition.
+
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue

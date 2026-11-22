@@ -987,6 +987,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "config reads and validates named Codex permissions profiles" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    assert Config.settings!().codex.permissions == nil
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_permissions: "workspace-git")
+    assert Config.settings!().codex.permissions == "workspace-git"
+    assert {:ok, %{permissions: "workspace-git"}} = Config.codex_runtime_settings()
+
+    for invalid_profile <- ["", "   ", 123] do
+      write_workflow_file!(Workflow.workflow_file_path(), codex_permissions: invalid_profile)
+      assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+      assert message =~ "codex.permissions"
+    end
+  end
+
   test "config reads defaults for optional settings" do
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
     on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)

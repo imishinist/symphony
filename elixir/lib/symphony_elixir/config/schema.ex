@@ -192,6 +192,7 @@ defmodule SymphonyElixir.Config.Schema do
 
       field(:thread_sandbox, :string, default: "workspace-write")
       field(:turn_sandbox_policy, :map)
+      field(:permissions, :string)
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:read_timeout_ms, :integer, default: 5_000)
       field(:stall_timeout_ms, :integer, default: 300_000)
@@ -207,6 +208,7 @@ defmodule SymphonyElixir.Config.Schema do
           :approval_policy,
           :thread_sandbox,
           :turn_sandbox_policy,
+          :permissions,
           :turn_timeout_ms,
           :read_timeout_ms,
           :stall_timeout_ms
@@ -214,6 +216,13 @@ defmodule SymphonyElixir.Config.Schema do
         empty_values: []
       )
       |> validate_required([:command])
+      |> validate_change(:permissions, fn :permissions, permissions ->
+        if String.trim(permissions) == "" do
+          [permissions: "can't be blank"]
+        else
+          []
+        end
+      end)
       |> validate_change(:command, fn :command, command ->
         if command != "" and String.trim(command) == "" do
           [command: "can't be blank"]

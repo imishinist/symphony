@@ -272,6 +272,71 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "named permissions replace legacy sandbox fields and stay bound to the session across reloads" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-permissions-#{System.unique_integer([:positive])}")
+    workspace = Path.join(test_root, "workspaces/MT-PROFILE")
+    codex_binary = Path.join(test_root, "fake-codex")
+    trace_file = Path.join(test_root, "requests.jsonl")
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf(test_root) end)
+
+    File.write!(codex_binary, """
+    #!/bin/sh
+    while IFS= read -r line; do
+      printf '%s\\n' "$line" >> "#{trace_file}"
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '%s\\n' '{"id":1,"result":{}}'
+          ;;
+        *'"method":"thread/start"'*)
+          printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-profile"}}}'
+          ;;
+        *'"method":"turn/start"'*)
+          printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-profile"}}}'
+          printf '%s\\n' '{"method":"turn/completed"}'
+          ;;
+      esac
+    done
+    """)
+
+    File.chmod!(codex_binary, 0o755)
+
+    config = [
+      tracker_kind: "memory",
+      workspace_root: Path.join(test_root, "workspaces"),
+      codex_command: "#{codex_binary} app-server",
+      codex_thread_sandbox: "read-only",
+      codex_turn_sandbox_policy: %{type: "readOnly"},
+      codex_permissions: "workspace-git"
+    ]
+
+    issue = %Issue{id: "profile", identifier: "MT-PROFILE", title: "Named permissions", state: "In Progress"}
+    write_workflow_file!(Workflow.workflow_file_path(), config)
+    assert {:ok, session} = AppServer.start_session(workspace)
+
+    try do
+      assert {:ok, _} = AppServer.run_turn(session, "First turn", issue)
+      write_workflow_file!(Workflow.workflow_file_path(), Keyword.put(config, :codex_permissions, "next-profile"))
+      assert {:ok, _} = AppServer.run_turn(session, "Continue the same session", issue)
+    after
+      AppServer.stop_session(session)
+    end
+
+    assert {:ok, _} = AppServer.run(workspace, "Start a new session", issue)
+
+    requests = trace_file |> File.read!() |> String.split("\n", trim: true) |> Enum.map(&Jason.decode!/1)
+    threads = Enum.filter(requests, &(&1["method"] == "thread/start"))
+    turns = Enum.filter(requests, &(&1["method"] == "turn/start"))
+
+    assert Enum.map(threads, &get_in(&1, ["params", "permissions"])) == ["workspace-git", "next-profile"]
+    assert Enum.map(turns, &get_in(&1, ["params", "permissions"])) == ["workspace-git", "workspace-git", "next-profile"]
+
+    for request <- threads ++ turns do
+      refute Map.has_key?(request["params"], "sandbox")
+      refute Map.has_key?(request["params"], "sandboxPolicy")
+    end
+  end
+
   test "app server marks request-for-input events as a hard failure" do
     test_root =
       Path.join(
