@@ -87,6 +87,35 @@ Supported release targets:
 - `linux_arm64`
 - `linux_x86_64`
 
+### Build local changes as a standalone executable
+
+Zig 0.15.2 is pinned in `mise.toml`. Install it with `mise install` and make sure `xz` is on
+`PATH` (`brew install xz` on macOS or `sudo apt-get install xz-utils` on Debian/Ubuntu).
+For an Apple Silicon Mac, build and run with:
+
+```bash
+mise install
+mise exec -- mix setup
+BURRITO_TARGET=macos_arm64 mise exec -- make release
+./burrito_out/symphony_macos_arm64 \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  /path/to/your/WORKFLOW.md
+```
+
+Choose another target from the list above as needed; omitting `BURRITO_TARGET` builds all four.
+The executable bundles Erlang and Elixir and runs without `mise`. `mix build` still produces the
+development escript at `bin/symphony`, which needs Erlang on `PATH`.
+
+On macOS, `make release` uses Zig's bundled macOS library stubs. This avoids the
+[Zig 0.15.2 incompatibility with newer macOS SDKs](https://github.com/burrito-elixir/burrito/issues/221).
+The SDK discovery override in `scripts/burrito-tools/xcrun` applies only to this build command.
+
+Burrito caches the extracted runtime by version. After rebuilding changes with the same version
+in `mix.exs`, stop the service and run `./burrito_out/symphony_macos_arm64 maintenance uninstall`
+before starting the new executable, or bump the project version before building.
+
+### Download a release
+
 `v*` tags publish all four targets with checksums. A manual workflow run builds the same
 artifacts without creating a release.
 

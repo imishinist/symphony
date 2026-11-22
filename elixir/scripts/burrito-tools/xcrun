@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Zig 0.15.2 cannot link arm64 against newer macOS SDKs, whose libSystem
+# stubs only advertise arm64e. Let Zig use its bundled macOS stubs instead.
+# This directory is added to PATH only by `make release`.
+if [ "$#" -eq 3 ] && [ "$1" = "--sdk" ] && [ "$2" = "macosx" ] && [ "$3" = "--show-sdk-path" ]; then
+  exit 1
+fi
+
+exec /usr/bin/xcrun "$@"
