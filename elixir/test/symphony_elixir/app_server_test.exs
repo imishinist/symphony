@@ -1,6 +1,53 @@
 defmodule SymphonyElixir.AppServerTest do
   use SymphonyElixir.TestSupport
 
+  test "app server decodes rate limits at the receive boundary and identifies connection lifetimes" do
+    root = Path.join(System.tmp_dir!(), "symphony-rate-stream-#{System.unique_integer([:positive])}")
+    workspace = Path.join(root, "workspaces/MT-RATES")
+    binary = Path.join(root, "fake-codex")
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    File.write!(binary, """
+    #!/bin/sh
+    count=0
+    while IFS= read -r line; do
+      count=$((count + 1))
+      case "$count" in
+        1) printf '%s\n' '{"id":1,"result":{}}' ;;
+        2) ;;
+        3) printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-rates"}}}' ;;
+        4)
+          printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-rates"}}}'
+          printf '%s\n' '{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":0}}}}'
+          printf '%s\n' '{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":5}}}}'
+          printf '%s\n' '{"method":"item/updated","params":{"rateLimits":{"primary":{"usedPercent":99}}}}'
+          printf '%s\n' '{"method":"turn/completed"}'
+          exit 0 ;;
+      esac
+    done
+    """)
+
+    File.chmod!(binary, 0o755)
+    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: Path.join(root, "workspaces"), codex_command: binary)
+    issue = %{id: "rates", identifier: "MT-RATES", title: "Rate limits"}
+    recipient = self()
+
+    sources =
+      for _ <- 1..2 do
+        assert {:ok, _} = AppServer.run(workspace, "test", issue, on_message: fn message -> send(recipient, {:stream, message}) end)
+        assert_received {:stream, %{rate_limit_update: %{source: source, patch: %{primary: %{used_percent: 0}}}}}
+        assert is_port(source)
+        assert_received {:stream, %{rate_limit_update: %{source: ^source, patch: %{primary: %{used_percent: 5}}}}}
+        assert_received {:stream, %{payload: %{"method" => "item/updated"}} = unrelated}
+        refute Map.has_key?(unrelated, :rate_limit_update)
+        source
+      end
+
+    assert [first, second] = sources
+    refute first == second
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(

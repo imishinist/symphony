@@ -357,6 +357,23 @@ The observability UI now runs on a minimal Phoenix stack:
 - Phoenix dependency static assets for the LiveView client bootstrap
 - Tracker issue identifiers link to the tracker-provided URL when it uses `http` or `https`
 
+The terminal dashboard's `Project` line displays `Tracker.project_url()`. Adapters may implement
+the optional `project_url(tracker_settings)` callback to provide a link; otherwise the line shows
+`n/a`. Linear and GitHub provide project and repository Issues links, respectively (including
+GitHub Enterprise). Adding a tracker link requires no provider-specific dashboard changes.
+`Rate Limits` displays a common view decoded by `Codex.RateLimits` from explicitly supported
+Codex notifications. New and legacy protocol formats are interpreted at the app-server boundary;
+the orchestrator retains the state and the terminal dashboard only formats the common fields.
+Sparse updates preserve available account metadata and absent/null windows or credits from the
+same app-server connection and limit ID. An updated window or credits object replaces that unit,
+including its unknown fields; zero and false are values, not missing data. An explicitly null
+`spendControlReached` remains unknown. Switching connections or limit IDs starts a fresh view,
+so workers and restarts cannot inherit each other's data. No per-connection history is retained.
+The JSON API's `rate_limits` still contains the latest original payload, without merging.
+Current windows display the percentage used, window length in minutes, and reset time in UTC.
+Before the first rate-limit notification after startup, or when Codex does not provide one,
+the value remains `unavailable`; this is not the tracker's API rate limit or an authentication error.
+
 ## Project Layout
 
 - `lib/`: application code and Mix tasks

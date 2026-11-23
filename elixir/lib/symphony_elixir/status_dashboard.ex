@@ -6,7 +6,8 @@ defmodule SymphonyElixir.StatusDashboard do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, HttpServer}
+  alias SymphonyElixir.Codex.RateLimits
+  alias SymphonyElixir.{Config, HttpServer, Tracker}
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixirWeb.ObservabilityPubSub
 
@@ -316,7 +317,7 @@ defmodule SymphonyElixir.StatusDashboard do
              running: running,
              retrying: retrying,
              codex_totals: codex_totals,
-             rate_limits: Map.get(snapshot, :rate_limits),
+             rate_limits_view: Map.get(snapshot, :rate_limits_view),
              polling: Map.get(snapshot, :polling)
            }},
           update_token_samples(token_samples, now_ms, total_tokens)
@@ -333,7 +334,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_snapshot_content(snapshot_data, tps, terminal_columns_override \\ nil) do
     case snapshot_data do
       {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
-        rate_limits = Map.get(snapshot, :rate_limits)
+        rate_limits = Map.get(snapshot, :rate_limits_view)
         project_link_lines = format_project_link_lines()
         project_refresh_line = format_project_refresh_line(Map.get(snapshot, :polling))
         codex_input_tokens = Map.get(codex_totals, :input_tokens, 0)
@@ -394,13 +395,9 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_project_link_lines do
     project_part =
-      case Config.settings!().tracker do
-        %{kind: "linear", project_slug: project_slug}
-        when is_binary(project_slug) and project_slug != "" ->
-          colorize(linear_project_url(project_slug), @ansi_cyan)
-
-        _ ->
-          colorize("n/a", @ansi_gray)
+      case Tracker.project_url() do
+        nil -> colorize("n/a", @ansi_gray)
+        url -> colorize(url, @ansi_cyan)
       end
 
     project_line = colorize("│ Project: ", @ansi_bold) <> project_part
@@ -427,8 +424,6 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_project_refresh_line(_) do
     colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
   end
-
-  defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
 
   defp dashboard_url do
     dashboard_url(Config.settings!().server.host, Config.server_port(), HttpServer.bound_port())
@@ -562,7 +557,7 @@ defmodule SymphonyElixir.StatusDashboard do
              running: running,
              retrying: retrying,
              codex_totals: codex_totals,
-             rate_limits: Map.get(snapshot, :rate_limits),
+             rate_limits_view: Map.get(snapshot, :rate_limits_view),
              polling: Map.get(snapshot, :polling)
            }}
 
@@ -925,12 +920,11 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_rate_limits(rate_limits) when is_map(rate_limits) do
     limit_id =
-      map_value(rate_limits, ["limit_id", :limit_id, "limit_name", :limit_name]) ||
-        "unknown"
+      rate_limits[:limit_name] || rate_limits[:limit_id] || "codex"
 
-    primary = format_rate_limit_bucket(map_value(rate_limits, ["primary", :primary]))
-    secondary = format_rate_limit_bucket(map_value(rate_limits, ["secondary", :secondary]))
-    credits = format_rate_limit_credits(map_value(rate_limits, ["credits", :credits]))
+    primary = format_rate_limit_bucket(rate_limits[:primary])
+    secondary = format_rate_limit_bucket(rate_limits[:secondary])
+    credits = format_rate_limit_credits(rate_limits[:credits])
 
     colorize(to_string(limit_id), @ansi_yellow) <>
       colorize(" | ", @ansi_gray) <>
@@ -951,58 +945,38 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_rate_limit_bucket(nil), do: "n/a"
 
   defp format_rate_limit_bucket(bucket) when is_map(bucket) do
-    remaining = map_value(bucket, ["remaining", :remaining])
-    limit = map_value(bucket, ["limit", :limit])
+    reset_in = bucket[:reset_in_seconds]
+    reset_at = bucket[:resets_at]
+    base = format_rate_limit_bucket_summary(bucket) || format_rate_limit_counts(bucket)
 
-    reset_value =
-      map_value(bucket, [
-        "reset_in_seconds",
-        :reset_in_seconds,
-        "resetInSeconds",
-        :resetInSeconds,
-        "reset_at",
-        :reset_at,
-        "resetAt",
-        :resetAt,
-        "resets_at",
-        :resets_at,
-        "resetsAt",
-        :resetsAt
-      ])
-
-    base =
-      cond do
-        integer_like?(remaining) and integer_like?(limit) ->
-          "#{format_count(remaining)}/#{format_count(limit)}"
-
-        integer_like?(remaining) ->
-          "remaining #{format_count(remaining)}"
-
-        integer_like?(limit) ->
-          "limit #{format_count(limit)}"
-
-        map_size(bucket) == 0 ->
-          "n/a"
-
-        true ->
-          bucket |> inspect(limit: 6) |> truncate(40)
-      end
-
-    if is_nil(reset_value) do
-      base
-    else
-      "#{base} reset #{format_reset_value(reset_value)}"
+    cond do
+      not is_nil(reset_in) -> "#{base} reset #{format_reset_value(reset_in)}"
+      not is_nil(reset_at) -> "#{base} reset #{format_reset_timestamp(reset_at)}"
+      true -> base
     end
   end
 
   defp format_rate_limit_bucket(other), do: to_string(other)
 
+  defp format_rate_limit_counts(bucket) do
+    remaining = bucket[:remaining]
+    limit = bucket[:limit]
+
+    cond do
+      integer_like?(remaining) and integer_like?(limit) -> "#{format_count(remaining)}/#{format_count(limit)}"
+      integer_like?(remaining) -> "remaining #{format_count(remaining)}"
+      integer_like?(limit) -> "limit #{format_count(limit)}"
+      map_size(bucket) == 0 -> "n/a"
+      true -> bucket |> inspect(limit: 6) |> truncate(40)
+    end
+  end
+
   defp format_rate_limit_credits(nil), do: "credits n/a"
 
   defp format_rate_limit_credits(credits) when is_map(credits) do
-    unlimited = map_value(credits, ["unlimited", :unlimited]) == true
-    has_credits = map_value(credits, ["has_credits", :has_credits]) == true
-    balance = map_value(credits, ["balance", :balance])
+    unlimited = credits[:unlimited] == true
+    has_credits = credits[:has_credits] == true
+    balance = credits[:balance]
 
     cond do
       unlimited ->
@@ -1010,6 +984,9 @@ defmodule SymphonyElixir.StatusDashboard do
 
       has_credits and is_number(balance) ->
         "credits #{format_number(balance)}"
+
+      has_credits and is_binary(balance) ->
+        "credits #{balance}"
 
       has_credits ->
         "credits available"
@@ -1020,6 +997,15 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp format_rate_limit_credits(other), do: "credits #{to_string(other)}"
+
+  defp format_reset_timestamp(value) when is_integer(value) do
+    case DateTime.from_unix(value) do
+      {:ok, datetime} -> DateTime.to_iso8601(datetime)
+      _ -> to_string(value)
+    end
+  end
+
+  defp format_reset_timestamp(value), do: format_reset_value(value)
 
   defp format_reset_value(value) when is_integer(value), do: "#{format_count(value)}s"
   defp format_reset_value(value) when is_binary(value), do: value
@@ -1363,11 +1349,13 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp humanize_codex_method("account/rateLimits/updated", payload) do
-    rate_limits =
-      map_path(payload, ["params", "rateLimits"]) ||
-        map_path(payload, [:params, :rateLimits])
+    summary =
+      case RateLimits.decode(payload) do
+        {:ok, %{patch: patch}} -> format_rate_limits_summary(patch)
+        :ignore -> "n/a"
+      end
 
-    "rate limits updated: #{format_rate_limits_summary(rate_limits)}"
+    "rate limits updated: #{summary}"
   end
 
   defp humanize_codex_method("account/chatgptAuthTokens/refresh", _payload), do: "account auth token refresh requested"
@@ -1604,11 +1592,9 @@ defmodule SymphonyElixir.StatusDashboard do
   defp append_usage_part(parts, _label, value) when not is_integer(value), do: parts
   defp append_usage_part(parts, label, value), do: parts ++ ["#{label} #{format_count(value)}"]
 
-  defp format_rate_limits_summary(nil), do: "n/a"
-
   defp format_rate_limits_summary(rate_limits) when is_map(rate_limits) do
-    primary = map_value(rate_limits, ["primary", :primary])
-    secondary = map_value(rate_limits, ["secondary", :secondary])
+    primary = rate_limits[:primary]
+    secondary = rate_limits[:secondary]
 
     primary_text = format_rate_limit_bucket_summary(primary)
     secondary_text = format_rate_limit_bucket_summary(secondary)
@@ -1621,11 +1607,9 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp format_rate_limits_summary(_rate_limits), do: "n/a"
-
   defp format_rate_limit_bucket_summary(bucket) when is_map(bucket) do
-    used_percent = map_value(bucket, ["usedPercent", :usedPercent])
-    window_mins = map_value(bucket, ["windowDurationMins", :windowDurationMins])
+    used_percent = bucket[:used_percent]
+    window_mins = bucket[:window_minutes]
 
     cond do
       is_number(used_percent) and is_integer(window_mins) ->

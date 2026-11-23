@@ -12,7 +12,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     Snapshot.assert_dashboard_snapshot!("idle", render_snapshot(snapshot_data, 0.0))
@@ -37,7 +37,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     Snapshot.assert_dashboard_snapshot!("idle_with_dashboard_url", render_snapshot(snapshot_data, 0.0))
@@ -74,7 +74,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            total_tokens: 268_500,
            seconds_running: 4_321
          },
-         rate_limits: %{
+         rate_limits_view: %{
            limit_id: "gpt-5",
            primary: %{remaining: 12_345, limit: 20_000, reset_in_seconds: 30},
            secondary: %{remaining: 45, limit: 60, reset_in_seconds: 12},
@@ -127,7 +127,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            })
          ],
          codex_totals: %{input_tokens: 18_000, output_tokens: 2_200, total_tokens: 20_200, seconds_running: 2_700},
-         rate_limits: %{
+         rate_limits_view: %{
            limit_id: "gpt-5",
            primary: %{remaining: 0, limit: 20_000, reset_in_seconds: 95},
            secondary: %{remaining: 0, limit: 60, reset_in_seconds: 45},
@@ -152,7 +152,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            })
          ],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = render_snapshot(snapshot_data, 0.0)
@@ -183,7 +183,7 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          ],
          retrying: [],
          codex_totals: %{input_tokens: 90, output_tokens: 12, total_tokens: 102, seconds_running: 75},
-         rate_limits: %{
+         rate_limits_view: %{
            limit_id: "priority-tier",
            primary: %{remaining: 100, limit: 100, reset_in_seconds: 1},
            secondary: %{remaining: 500, limit: 500, reset_in_seconds: 1},

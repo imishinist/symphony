@@ -11,6 +11,9 @@ defmodule SymphonyElixir.GitHub.Adapter do
   @active_states ["open"]
   @terminal_states ["closed"]
 
+  @spec project_url(map()) :: String.t() | nil
+  def project_url(tracker_settings), do: Client.project_url(tracker_settings)
+
   @spec validate_config(map()) :: :ok | {:error, term()}
   def validate_config(tracker_settings) do
     with :ok <-

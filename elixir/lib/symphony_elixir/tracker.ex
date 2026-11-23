@@ -1,10 +1,11 @@
 defmodule SymphonyElixir.Tracker do
   @moduledoc """
-  Adapter boundary for issue tracker reads and provider-native agent tools.
+  Adapter boundary for issue tracker reads, project links, and provider-native agent tools.
 
   The orchestrator only depends on the read callbacks. Agent-side mutations stay
   behind optional provider-native tools so tracker-specific capabilities do not
   leak into scheduler policy.
+  Observability surfaces use the optional project URL callback without inspecting tracker kinds.
   """
 
   alias SymphonyElixir.Config
@@ -25,10 +26,26 @@ defmodule SymphonyElixir.Tracker do
   @callback execute_agent_tool(String.t(), term(), keyword()) :: map()
   @callback secret_environment_names(map()) :: [String.t()]
   @callback validate_config(map()) :: :ok | {:error, term()}
+  @callback project_url(map()) :: String.t() | nil
 
   @optional_callbacks agent_tool_specs: 0,
                       execute_agent_tool: 3,
-                      validate_config: 1
+                      validate_config: 1,
+                      project_url: 1
+
+  @doc """
+  Returns the adapter-owned project URL, or nil when the adapter has no project link.
+  Uses one settings snapshot so adapter selection and URL generation agree across reloads.
+  """
+  @spec project_url() :: String.t() | nil
+  def project_url do
+    tracker_settings = Config.settings!().tracker
+    adapter = adapter_for_settings!(tracker_settings)
+
+    if Code.ensure_loaded?(adapter) and function_exported?(adapter, :project_url, 1) do
+      adapter.project_url(tracker_settings)
+    end
+  end
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_issues_by_states(states) do

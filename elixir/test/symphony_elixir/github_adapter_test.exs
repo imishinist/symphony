@@ -31,6 +31,45 @@ defmodule SymphonyElixir.GitHub.AdapterTest do
     :ok
   end
 
+  test "tracker project links follow adapter settings across reloads and retain the last valid configuration" do
+    for {provider, expected} <- [
+          {"repo: imishinist/symphony", "https://github.com/imishinist/symphony/issues"},
+          {"repo: example/other\n    api_url: https://git.example.com/api/v3", "https://git.example.com/example/other/issues"}
+        ] do
+      File.write!(Workflow.workflow_file_path(), """
+      ---
+      tracker:
+        kind: github
+        provider:
+          #{provider}
+          token: test-token
+        active_states: [open]
+        terminal_states: [closed]
+      ---
+      Test
+      """)
+
+      assert :ok = WorkflowStore.force_reload()
+      assert Tracker.project_url() == expected
+    end
+
+    File.write!(Workflow.workflow_file_path(), "---\ntracker:\n  kind: unknown\n---\nTest")
+    assert {:error, {:unsupported_tracker_kind, "unknown"}} = WorkflowStore.force_reload()
+    assert Tracker.project_url() == "https://git.example.com/example/other/issues"
+  end
+
+  test "adapter project links resolve repository environment references and reject invalid settings" do
+    env_name = "SYMPHONY_PROJECT_URL_TEST_REPO"
+    previous_value = System.get_env(env_name)
+    on_exit(fn -> restore_env(env_name, previous_value) end)
+    System.put_env(env_name, "env/repository")
+
+    assert GitHubAdapter.project_url(tracker_settings(%{"repo" => "$#{env_name}"})) ==
+             "https://github.com/env/repository/issues"
+
+    assert GitHubAdapter.project_url(tracker_settings(%{"repo" => "invalid"})) == nil
+  end
+
   test "adapter validates GitHub config, delegates reads, and advertises github_api" do
     settings = tracker_settings()
 

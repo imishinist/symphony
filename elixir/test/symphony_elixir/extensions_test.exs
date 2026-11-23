@@ -207,6 +207,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert Config.settings!().tracker.kind == "memory"
     assert SymphonyElixir.Tracker.adapter() == Memory
+    assert SymphonyElixir.Tracker.project_url() == nil
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_ids(["issue-1"])
 
@@ -224,10 +225,14 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+    assert SymphonyElixir.Tracker.project_url() == "https://linear.app/project/project/issues"
     assert SymphonyElixir.Tracker.bind_agent_tools().secret_environment_names == ["LINEAR_API_KEY"]
   end
 
   test "linear adapter delegates reads and advertises its native agent tool" do
+    assert Adapter.project_url(%{project_slug: "another-project"}) == "https://linear.app/project/another-project/issues"
+    assert Adapter.project_url(%{project_slug: nil}) == nil
+    assert Adapter.project_url(%{project_slug: ""}) == nil
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 
     assert {:ok, ["Todo"]} = Adapter.fetch_issues_by_states(["Todo"])
