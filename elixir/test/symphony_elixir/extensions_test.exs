@@ -464,6 +464,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
     assert dashboard_css =~ ":root {"
+    assert dashboard_css =~ "--accent: #0a6ed1"
+    assert dashboard_css =~ ".metric-card-running"
+    assert dashboard_css =~ ".data-table tbody tr:hover"
+    assert dashboard_css =~ "@media (max-width: 560px)"
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"

@@ -79,25 +79,25 @@ defmodule SymphonyElixirWeb.DashboardLive do
         </section>
       <% else %>
         <section class="metric-grid">
-          <article class="metric-card">
+          <article class="metric-card metric-card-running">
             <p class="metric-label">Running</p>
             <p class="metric-value numeric"><%= @payload.counts.running %></p>
             <p class="metric-detail">Active issue sessions in the current runtime.</p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card metric-card-retrying">
             <p class="metric-label">Retrying</p>
             <p class="metric-value numeric"><%= @payload.counts.retrying %></p>
             <p class="metric-detail">Issues waiting for the next retry window.</p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card metric-card-blocked">
             <p class="metric-label">Blocked</p>
             <p class="metric-value numeric"><%= @payload.counts.blocked %></p>
             <p class="metric-detail">Issues paused for operator input or approval.</p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card metric-card-tokens">
             <p class="metric-label">Total tokens</p>
             <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
@@ -105,7 +105,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </p>
           </article>
 
-          <article class="metric-card">
+          <article class="metric-card metric-card-runtime">
             <p class="metric-label">Runtime</p>
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
