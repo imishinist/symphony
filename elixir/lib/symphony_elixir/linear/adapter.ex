@@ -8,6 +8,13 @@ defmodule SymphonyElixir.Linear.Adapter do
   alias SymphonyElixir.Linear.{AgentTool, Client}
   alias SymphonyElixir.Tracker.Issue
 
+  @spec project_url(map()) :: String.t() | nil
+  def project_url(%{project_slug: project_slug}) when is_binary(project_slug) and project_slug != "" do
+    "https://linear.app/project/#{project_slug}/issues"
+  end
+
+  def project_url(_tracker_settings), do: nil
+
   @spec validate_config(map()) :: :ok | {:error, term()}
   def validate_config(tracker_settings) do
     cond do

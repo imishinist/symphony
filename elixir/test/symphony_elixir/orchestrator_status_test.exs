@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Codex.RateLimits
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -444,29 +446,60 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       "credits" => %{"has_credits" => false, "unlimited" => false, "balance" => nil}
     }
 
+    source = make_ref()
+
+    legacy = %{
+      "method" => "codex/event/token_count",
+      "params" => %{"msg" => %{"payload" => %{"rate_limits" => rate_limits}}}
+    }
+
+    send_rate_limit_update(pid, issue_id, legacy, source)
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.rate_limits == rate_limits
+
+    current_limits = %{
+      "limitId" => nil,
+      "limitName" => nil,
+      "primary" => %{"usedPercent" => 0, "windowDurationMins" => 300, "resetsAt" => 2_000_000_000},
+      "secondary" => %{"usedPercent" => 15, "windowDurationMins" => 10_080, "resetsAt" => nil},
+      "credits" => %{"hasCredits" => true, "unlimited" => false, "balance" => "12.50"}
+    }
+
+    current = %{"method" => "account/rateLimits/updated", "params" => %{"rateLimits" => current_limits}}
+    send_rate_limit_update(pid, issue_id, current, source)
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.rate_limits == current_limits
+
+    rendered = StatusDashboard.format_snapshot_content_for_test({:ok, snapshot}, 0.0)
+    assert rendered =~ "primary 0% / 300m"
+    assert rendered =~ "secondary 15% / 10080m"
+    assert rendered =~ "credits 12.50"
+    refute rendered =~ "2000000000s"
+
+    partial = %{"primary" => %{"usedPercent" => 5}, "limitName" => nil}
+    send_rate_limit_update(pid, issue_id, %{"method" => "account/rateLimits/updated", "params" => %{"rateLimits" => partial}}, source)
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.rate_limits == partial
+    assert snapshot.rate_limits_view.limit_id == "codex"
+    assert snapshot.rate_limits_view.secondary.used_percent == 15
+    assert snapshot.rate_limits_view.primary.used_percent == 5
+
     send(
       pid,
       {:codex_worker_update, issue_id,
        %{
          event: :notification,
-         payload: %{
-           "method" => "codex/event/token_count",
-           "params" => %{
-             "msg" => %{
-               "type" => "event_msg",
-               "payload" => %{
-                 "type" => "token_count",
-                 "rate_limits" => rate_limits
-               }
-             }
-           }
-         },
+         payload: %{"method" => "item/updated", "params" => %{"primary" => "unrelated"}},
          timestamp: DateTime.utc_now()
        }}
     )
 
-    snapshot = GenServer.call(pid, :snapshot)
-    assert snapshot.rate_limits == rate_limits
+    assert GenServer.call(pid, :snapshot).rate_limits == partial
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    assert GenServer.call(pid, :snapshot).rate_limits == partial
   end
 
   test "orchestrator token accounting prefers total_token_usage over last_token_usage in token_count payloads" do
@@ -1187,13 +1220,20 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
 
     assert rendered =~ "https://linear.app/project/project/issues"
     refute rendered =~ "Dashboard:"
+  end
+
+  test "status dashboard displays the tracker project URL or its unavailable fallback" do
+    assert StatusDashboard.format_snapshot_content_for_test(:error, 0.0) =~ Tracker.project_url()
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    assert Tracker.project_url() == nil
+    assert StatusDashboard.format_snapshot_content_for_test(:error, 0.0) =~ "n/a"
   end
 
   test "status dashboard renders dashboard url on its own line when server port is configured" do
@@ -1215,7 +1255,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1241,7 +1281,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil,
+         rate_limits_view: nil,
          polling: %{checking?: false, next_poll_in_ms: 2_000, poll_interval_ms: 30_000}
        }}
 
@@ -1255,7 +1295,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil,
+         rate_limits_view: nil,
          polling: %{checking?: true, next_poll_in_ms: nil, poll_interval_ms: 30_000}
        }}
 
@@ -1270,7 +1310,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1309,7 +1349,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            total_tokens: 102,
            seconds_running: 75
          },
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1325,7 +1365,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          running: [],
          retrying: [],
          codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
+         rate_limits_view: nil
        }}
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
@@ -1799,5 +1839,20 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {next_tokens, [{timestamp, next_tokens} | acc]}
     end)
     |> elem(1)
+  end
+
+  defp send_rate_limit_update(pid, issue_id, payload, source) do
+    {:ok, decoded} = RateLimits.decode(payload)
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: payload,
+         rate_limit_update: Map.put(decoded, :source, source),
+         timestamp: DateTime.utc_now()
+       }}
+    )
   end
 end

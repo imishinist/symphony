@@ -17,6 +17,19 @@ defmodule SymphonyElixir.GitHub.Client do
     with {:ok, _settings} <- settings(tracker_settings), do: :ok
   end
 
+  @spec project_url(map()) :: String.t() | nil
+  def project_url(tracker_settings) do
+    case settings(tracker_settings) do
+      {:ok, settings} ->
+        uri = URI.parse(settings.api_url)
+        host = if uri.host == "api.github.com", do: "github.com", else: uri.host
+        URI.to_string(%{uri | host: host, path: "/#{settings.repo}/issues", query: nil, fragment: nil})
+
+      _ ->
+        nil
+    end
+  end
+
   @spec secret_environment_names(map()) :: [String.t()]
   def secret_environment_names(tracker_settings) do
     provider = provider_settings(tracker_settings)

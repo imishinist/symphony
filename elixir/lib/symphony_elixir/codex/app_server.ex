@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   require Logger
   alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.Codex.RateLimits
 
   @initialize_id 1
   @thread_start_id 2
@@ -989,11 +990,18 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp emit_message(on_message, event, details, metadata) when is_function(on_message, 1) do
     message = metadata |> Map.merge(details) |> Map.put(:event, event) |> Map.put(:timestamp, DateTime.utc_now())
+
+    message =
+      case RateLimits.decode(details[:payload]) do
+        {:ok, update} -> Map.put(message, :rate_limit_update, Map.put(update, :source, metadata[:codex_source]))
+        :ignore -> message
+      end
+
     on_message.(message)
   end
 
   defp metadata_from_message(port, payload) do
-    port |> port_metadata(nil) |> maybe_set_usage(payload)
+    port |> port_metadata(nil) |> Map.put(:codex_source, port) |> maybe_set_usage(payload)
   end
 
   defp maybe_set_usage(metadata, payload) when is_map(payload) do
