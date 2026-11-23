@@ -1,4 +1,7 @@
-.PHONY: help all setup deps build release fmt fmt-check lint test coverage ci dialyzer e2e
+PREFIX ?= $(HOME)/.local
+RELEASE_TARGET ?= macos_arm64
+
+.PHONY: help all setup deps build release install fmt fmt-check lint test coverage ci dialyzer e2e
 
 MIX ?= mix
 
@@ -15,7 +18,11 @@ build:
 	$(MIX) build
 
 release:
-	MIX_ENV=prod PATH="$(CURDIR)/scripts/burrito-tools:$$PATH" $(MIX) release symphony --overwrite
+	MIX_ENV=prod PATH="$(CURDIR)/scripts/burrito-tools:$$PATH" BURRITO_TARGET=$(RELEASE_TARGET) $(MIX) release symphony --overwrite
+
+install:
+	install -d $(PREFIX)/bin
+	install -m 0755 burrito_out/symphony_$(RELEASE_TARGET) $(PREFIX)/bin/symphony
 
 fmt:
 	$(MIX) format
